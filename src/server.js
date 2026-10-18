@@ -1,4 +1,4 @@
-process.loadEnvFile?.();
+try { process.loadEnvFile(); } catch {}
 const http = require('http');
 const express = require('express');
 const helmet = require('helmet');
