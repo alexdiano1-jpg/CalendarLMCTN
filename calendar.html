@@ -1,0 +1,120 @@
+<!doctype html><html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Calendario · Hub</title>
+<style>
+:root{--bg:#fafaf9;--fg:#1c1917;--mut:#78716c;--card:#fff;--bd:#e7e5e4;--ac:#b45309;--soft:#fef3c7;--bad:#b91c1c}
+@media(prefers-color-scheme:dark){:root{--bg:#1c1917;--fg:#fafaf9;--mut:#a8a29e;--card:#292524;--bd:#44403c;--ac:#f59e0b;--soft:#44340f;--bad:#f87171}}
+*{box-sizing:border-box}body{margin:0;font:16px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--fg);padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+main{max-width:720px;margin:0 auto;padding:12px}
+button,input{font:inherit;color:inherit;background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:8px 10px}
+button{cursor:pointer}.primary{background:var(--ac);border-color:var(--ac);color:#fff}
+header{display:flex;align-items:center;gap:6px;margin-bottom:10px}header h1{flex:1;font-size:1.15rem;margin:0;text-transform:capitalize}
+.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--bd);border:1px solid var(--bd);border-radius:12px;overflow:hidden}
+.wd{background:var(--card);text-align:center;font-size:.75rem;color:var(--mut);padding:6px 0}
+.day{background:var(--card);border:0;border-radius:0;min-height:68px;padding:4px 3px;text-align:left;display:flex;flex-direction:column;gap:2px;overflow:hidden;min-width:0}
+.day.out{opacity:.45}.day.sel{outline:2px solid var(--ac);outline-offset:-2px}
+.num{font-size:.8rem;width:22px;height:22px;display:grid;place-items:center;border-radius:50%}
+.day.today .num{background:var(--ac);color:#fff}
+.chip{font-size:.68rem;line-height:1.2;background:var(--soft);border-radius:4px;padding:1px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.more{font-size:.68rem;color:var(--mut)}
+.panel{margin-top:14px}.panel h2{font-size:1rem;margin:0 0 8px;text-transform:capitalize}
+.ev{display:flex;gap:10px;align-items:center;background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:10px;margin-bottom:8px}
+.ev div{flex:1;min-width:0}.ev small{color:var(--mut)}.del{color:var(--bad)}
+form{display:grid;gap:8px;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-top:12px}
+.r{display:flex;gap:8px}.r>*{flex:1;min-width:0}label.c{display:flex;gap:8px;align-items:center}
+#toast{position:fixed;left:16px;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));padding:10px 14px;border-radius:10px;background:var(--bad);color:#fff;display:none;text-align:center}
+</style></head><body><main>
+<header><button id="prev" aria-label="Mese precedente">‹</button><h1 id="title"></h1><button id="today">Oggi</button><button id="next" aria-label="Mese successivo">›</button></header>
+<div class="grid" id="grid"></div>
+<div class="panel"><h2 id="dayTitle"></h2><div id="list"></div>
+<form id="form" hidden><b>Nuovo evento</b>
+  <input id="fTitle" placeholder="Titolo" required maxlength="120">
+  <label class="c"><input type="checkbox" id="fAll"> Tutto il giorno</label>
+  <div class="r" id="times"><input type="time" id="fStart" value="20:00"><input type="time" id="fEnd" value="22:00"></div>
+  <button class="primary">Aggiungi</button></form></div>
+</main><div id="toast"></div>
+<script>
+const $=s=>document.querySelector(s);
+const h=(t,p={},...k)=>{const e=document.createElement(t);Object.assign(e,p);e.append(...k);return e};
+const api=async(path,o={})=>{const r=await fetch('/api'+path,{method:o.method||'GET',headers:{'Content-Type':'application/json'},body:o.body&&JSON.stringify(o.body)});
+  const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||r.status);return j};
+let tt;const toast=m=>{const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(tt);tt=setTimeout(()=>t.style.display='none',3000)};
+const run=f=>async(...a)=>{try{await f(...a)}catch(e){toast(e.message)}};
+
+const pad=n=>String(n).padStart(2,'0'),TZ=Intl.DateTimeFormat().resolvedOptions().timeZone;
+const key=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const parseKey=k=>{const[a,b,c]=k.split('-').map(Number);return new Date(a,b-1,c)};
+const addDays=(d,n)=>new Date(d.getFullYear(),d.getMonth(),d.getDate()+n);
+const hm=d=>d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
+let me,canWrite=false,cur=new Date(),selKey=key(new Date());cur=new Date(cur.getFullYear(),cur.getMonth(),1);
+const EV={};
+
+const gridStart=()=>addDays(cur,-((cur.getDay()+6)%7)); // settimana da lunedì
+
+const load=run(async()=>{
+  const gs=gridStart(),ge=addDays(gs,42);
+  const items=await api(`/calendar/events?from=${encodeURIComponent(gs.toISOString())}&to=${encodeURIComponent(ge.toISOString())}`);
+  for(const k in EV)delete EV[k];
+  for(const e of items){
+    const allDay=!!e.start.date;
+    const s=allDay?parseKey(e.start.date):new Date(e.start.dateTime);
+    let en=allDay?addDays(parseKey(e.end.date),-1):new Date(new Date(e.end.dateTime)-1);
+    if(en<s)en=s;
+    for(let d=new Date(s.getFullYear(),s.getMonth(),s.getDate());d<=en;d=addDays(d,1))(EV[key(d)]??=[]).push({e,allDay,s,en});
+  }
+  render();
+});
+
+function render(){
+  $('#title').textContent=cur.toLocaleDateString('it-IT',{month:'long',year:'numeric'});
+  const g=$('#grid');g.replaceChildren(...['L','M','M','G','V','S','D'].map(x=>h('div',{className:'wd',textContent:x})));
+  const gs=gridStart(),today=key(new Date());
+  for(let i=0;i<42;i++){
+    const d=addDays(gs,i),k=key(d),evs=EV[k]||[];
+    const c=h('button',{className:'day'+(d.getMonth()!==cur.getMonth()?' out':'')+(k===today?' today':'')+(k===selKey?' sel':''),
+      onclick:()=>{selKey=k;if(d.getMonth()!==cur.getMonth()){cur=new Date(d.getFullYear(),d.getMonth(),1);load()}else render()}},
+      h('span',{className:'num',textContent:d.getDate()}));
+    evs.slice(0,2).forEach(x=>c.append(h('span',{className:'chip',textContent:x.e.summary||'(senza titolo)'})));
+    if(evs.length>2)c.append(h('span',{className:'more',textContent:`+${evs.length-2}`}));
+    g.append(c);
+  }
+  renderDay();
+}
+
+function renderDay(){
+  const d=parseKey(selKey);
+  $('#dayTitle').textContent=d.toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
+  const evs=(EV[selKey]||[]).slice().sort((a,b)=>(b.allDay-a.allDay)||(a.s-b.s));
+  const list=$('#list');list.replaceChildren();
+  if(!evs.length)list.append(h('p',{className:'more',textContent:'Nessun evento.'}));
+  for(const x of evs){
+    const when=x.allDay?'Tutto il giorno':`${hm(new Date(x.e.start.dateTime))} – ${hm(new Date(x.e.end.dateTime))}`;
+    const row=h('div',{className:'ev'},h('div',{},h('b',{textContent:x.e.summary||'(senza titolo)'}),h('br'),h('small',{textContent:when})));
+    if(canWrite)row.append(h('button',{className:'del',textContent:'Elimina',onclick:run(async()=>{
+      if(!confirm('Eliminare questo evento?'))return;
+      await api('/calendar/events/'+encodeURIComponent(x.e.id),{method:'DELETE'});load()})}));
+    list.append(row);
+  }
+}
+
+$('#prev').onclick=()=>{cur=new Date(cur.getFullYear(),cur.getMonth()-1,1);load()};
+$('#next').onclick=()=>{cur=new Date(cur.getFullYear(),cur.getMonth()+1,1);load()};
+$('#today').onclick=()=>{const n=new Date();cur=new Date(n.getFullYear(),n.getMonth(),1);selKey=key(n);load()};
+$('#fAll').onchange=e=>$('#times').hidden=e.target.checked;
+$('#form').onsubmit=run(async ev=>{
+  ev.preventDefault();
+  const title=$('#fTitle').value.trim(),all=$('#fAll').checked,st=$('#fStart').value,en=$('#fEnd').value;
+  if(!title)return;
+  if(!all&&en<=st)return toast('L’ora di fine deve essere dopo l’inizio');
+  const body=all?{title,start:{date:selKey},end:{date:key(addDays(parseKey(selKey),1))}}
+    :{title,start:{dateTime:`${selKey}T${st}:00`,timeZone:TZ},end:{dateTime:`${selKey}T${en}:00`,timeZone:TZ}};
+  await api('/calendar/events',{method:'POST',body});
+  $('#fTitle').value='';load();
+});
+
+(async()=>{
+  me=await(await fetch('/api/me')).json();
+  if(!me||me.status!=='approved')return location.href='/';
+  canWrite=me.role==='admin'||me.role==='member';   // la UI nasconde i comandi, ma il vero controllo è sul server
+  $('#form').hidden=!canWrite;load();
+})();
+</script></body></html>

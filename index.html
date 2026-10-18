@@ -1,0 +1,12 @@
+<!doctype html><html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Hub</title></head>
+<body><main id="app">Caricamento…</main>
+<script>
+(async () => {
+  const me = await (await fetch('/api/me')).json();
+  const app = document.getElementById('app');
+  if (!me) app.innerHTML = '<a href="/auth/login">Accedi con Google</a>';
+  else if (me.status !== 'approved') app.textContent = 'Account in attesa di approvazione dall’admin.';
+  else { app.textContent = `Ciao ${me.name} (${me.role})`; const c = document.createElement('a'); c.href = '/calendar.html'; c.textContent = ' · Calendario'; app.append(c); if (me.role === 'admin') { const a = document.createElement('a'); a.href = '/admin.html'; a.textContent = ' · Pannello admin'; app.append(a); } } // TODO: viste Calendario / Note / Chat / Admin
+})();
+</script></body></html>
